@@ -1,0 +1,135 @@
+name: Publish container image
+
+# Publishing uses the workflow's own GITHUB_TOKEN, so contributors need no
+# personal access token and no registry secret is stored in this repository.
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+# One publisher per branch or tag. Runs are serialized instead of cancelled so
+# an in-flight image push is never interrupted halfway through.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  publish:
+    name: Build and smoke test image
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The workflow must not leave the token in .git/config for later steps.
+          persist-credentials: false
+
+      - name: Resolve lowercase image name
+        id: image
+        shell: bash
+        run: |
+          set -euo pipefail
+          # GHCR rejects uppercase path segments, while GitHub repository names
+          # may contain them, so normalize the owner/repository part here.
+          image="ghcr.io/${GITHUB_REPOSITORY,,}"
+          echo "name=$image" >> "$GITHUB_OUTPUT"
+          echo "Publishing to $image"
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Log in to GHCR
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Derive image tags and labels
+        id: meta
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        with:
+          images: ${{ steps.image.outputs.name }}
+          flavor: latest=false
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha,format=short
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.title=CPA Insight
+            org.opencontainers.image.description=Read-only window usage and forecast dashboard for CPA Manager Plus
+
+      - name: Build and push image
+        id: build
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          # Only the architecture validated for this dashboard is published.
+          platforms: linux/amd64
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          # No Manager address or admin key is injected: configuration stays a
+          # runtime concern of the container.
+
+      - name: Pull the exact published digest
+        env:
+          IMAGE: ${{ steps.image.outputs.name }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: docker pull "$IMAGE@$DIGEST"
+
+      - name: Start published image through Compose
+        env:
+          CPA_INSIGHT_IMAGE: ${{ steps.image.outputs.name }}@${{ steps.build.outputs.digest }}
+          # Unused host ports for this smoke test only.
+          PORT: '55173'
+          BIND_ADDRESS: 127.0.0.1
+        run: |
+          set -euo pipefail
+          # Manager credentials are intentionally absent: the health check is a
+          # liveness probe and must pass without an upstream data source.
+          docker compose -p ghcr-smoke up -d --no-build --wait --wait-timeout 90
+          curl --fail --silent --show-error http://127.0.0.1:55173/api/health
+          echo
+          curl --fail --silent --show-error --output /dev/null http://127.0.0.1:55173/
+          docker compose -p ghcr-smoke ps
+
+      - name: Stop smoke test containers
+        if: always() && steps.build.outputs.digest != ''
+        env:
+          CPA_INSIGHT_IMAGE: ${{ steps.image.outputs.name }}@${{ steps.build.outputs.digest }}
+          PORT: '55173'
+          BIND_ADDRESS: 127.0.0.1
+        run: |
+          # Container output is kept in the job log so a failed --wait is diagnosable.
+          docker compose -p ghcr-smoke logs --no-color --tail 100 || true
+          docker compose -p ghcr-smoke down --remove-orphans
+
+      - name: Report published reference
+        if: always() && steps.build.outputs.digest != ''
+        run: |
+          {
+            echo "### Image pushed to GHCR"
+            echo
+            echo '```'
+            echo "${{ steps.image.outputs.name }}@${{ steps.build.outputs.digest }}"
+            echo '```'
+            echo
+            echo 'Tags:'
+            echo '```'
+            echo "${{ steps.meta.outputs.tags }}"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

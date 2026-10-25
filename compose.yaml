@@ -1,0 +1,25 @@
+services:
+  cpa-insight:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    # Prebuilt image by default; the build block above still serves
+    # `docker compose up -d --build` from source. Override with CPA_INSIGHT_IMAGE.
+    image: ${CPA_INSIGHT_IMAGE:-ghcr.io/night-stars-1/cpa-kanban:latest}
+    restart: unless-stopped
+    init: true
+    environment:
+      # Fixed container-side listener; the host-side PORT only affects publishing.
+      HOST: 0.0.0.0
+      PORT: "5173"
+      # Server-only settings, interpolated from the host .env by Compose.
+      # Empty values are allowed: the UI then reports the upstream as unavailable.
+      CPA_MANAGER_BASE_URL: ${CPA_MANAGER_BASE_URL:-}
+      CPA_MANAGER_ADMIN_KEY: ${CPA_MANAGER_ADMIN_KEY:-}
+      PUBLIC_ORIGIN: ${PUBLIC_ORIGIN:-}
+    ports:
+      # Loopback-only by default; set BIND_ADDRESS plus PUBLIC_ORIGIN to expose it.
+      - "${BIND_ADDRESS:-127.0.0.1}:${PORT:-5173}:5173"
+    extra_hosts:
+      # Lets the container reach a CPA Manager running directly on the host.
+      - "host.docker.internal:host-gateway"
