@@ -6,6 +6,7 @@ import { dirname, extname, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadEnvFile } from 'node:process';
 import { fetchSnapshot } from './lib/manager.mjs';
+import { toDashboardSnapshot, toPublicFailureMessage } from './lib/dashboard.mjs';
 
 const root = dirname(fileURLToPath(import.meta.url));
 const mime = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.json': 'application/json', '.woff2': 'font/woff2', '.png': 'image/png', '.ico': 'image/x-icon' };
@@ -71,9 +72,9 @@ export async function createDashboardServer({ production = false, port = 5173 } 
       }
       try {
         const snapshot = await fetchSnapshot(configuration);
-        return json(res, 200, snapshot);
+        return json(res, 200, toDashboardSnapshot(snapshot));
       } catch (error) {
-        return json(res, 502, { error: error instanceof Error ? error.message : '读取实例失败。' });
+        return json(res, 502, { error: toPublicFailureMessage(error) });
       }
     }
     if (pathname.startsWith('/api/')) return json(res, 404, { error: '接口不存在。' });

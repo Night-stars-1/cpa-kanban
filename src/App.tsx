@@ -42,9 +42,32 @@ const AUTO_REFRESH_OPTIONS = [
 const EMPTY_SNAPSHOT: Snapshot = {
   generatedAtMs: 0,
   rows: [],
-  warnings: [],
-  sourceLabel: '',
 };
+
+/**
+ * 客户端本地视图行：只在公开契约之上追加派生字段，不引入任何服务端身份字段。
+ * selectionKey 完全由公开的 windowLabel、windowMode 与该组合在响应中的出现序号构成，
+ * 既不取自服务端标识，也不会进入请求参数、CSV 或界面文本。
+ */
+interface WindowView extends WindowRow {
+  occurrence: number;
+  selectionKey: string;
+}
+
+/** 按响应顺序包装公开行；同标签同模式的窗口按出现顺序各自保留，不做去重。 */
+function createWindowViews(rows: WindowRow[]): WindowView[] {
+  const occurrences = new Map<string, number>();
+  return rows.map((row) => {
+    const base = `${row.windowLabel}\u001f${row.windowMode}`;
+    const occurrence = (occurrences.get(base) ?? 0) + 1;
+    occurrences.set(base, occurrence);
+    return {
+      ...row,
+      occurrence,
+      selectionKey: `${base}\u001f${occurrence}`,
+    };
+  });
+}
 
 const CHART_METRICS: Array<{ key: MetricKey; label: string }> = [
   { key: 'requests', label: '请求' },
@@ -113,16 +136,11 @@ function parseForecast(value: unknown, path: string): Forecast | null {
 function parseWindowRow(value: unknown, index: number): WindowRow {
   const path = `rows[${index}]`;
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {
-    throw new Error(`实例返回的 ${path} 不是有效对象。`);
+    throw new Error(`服务端返回的 ${path} 不是有效对象。`);
   }
 
   const candidate = value as Partial<WindowRow>;
   const {
-    id,
-    accountId,
-    accountName,
-    provider,
-    plan,
     windowLabel,
     windowMode,
     startMs,
@@ -134,17 +152,12 @@ function parseWindowRow(value: unknown, index: number): WindowRow {
   } = candidate;
 
   if (
-    typeof id !== 'string' ||
-    typeof accountId !== 'string' ||
-    typeof accountName !== 'string' ||
-    typeof provider !== 'string' ||
-    typeof plan !== 'string' ||
     typeof windowLabel !== 'string' ||
     typeof windowMode !== 'string' ||
     typeof stale !== 'boolean' ||
     typeof unavailableReason !== 'string'
   ) {
-    throw new Error(`实例返回的 ${path} 缺少必需的字符串或布尔字段。`);
+    throw new Error(`服务端返回的 ${path} 缺少必需的字符串或布尔字段。`);
   }
 
   const normalizedStartMs = nullableNumber(startMs);
@@ -158,15 +171,10 @@ function parseWindowRow(value: unknown, index: number): WindowRow {
     normalizedUsedPercent === undefined ||
     normalizedObservedAtMs === undefined
   ) {
-    throw new Error(`实例返回的 ${path} 含无效的时间或额度字段。`);
+    throw new Error(`服务端返回的 ${path} 含无效的时间或额度字段。`);
   }
 
   return {
-    id,
-    accountId,
-    accountName,
-    provider,
-    plan,
     windowLabel,
     windowMode,
     startMs: normalizedStartMs,
@@ -197,30 +205,12 @@ function parseSnapshot(payload: unknown): Snapshot {
   if (!Array.isArray(raw.rows)) {
     throw new Error('服务端返回的数据缺少 rows 数组。');
   }
-  if (
-    !Array.isArray(raw.warnings) ||
-    !raw.warnings.every((item) => typeof item === 'string')
-  ) {
-    throw new Error('服务端返回的数据缺少 warnings 字符串数组。');
-  }
-  if (typeof raw.sourceLabel !== 'string') {
-    throw new Error('服务端返回的数据缺少 sourceLabel。');
-  }
 
   const rows = raw.rows.map((row, index) => parseWindowRow(row, index));
-  const seenIds = new Set<string>();
-  for (const row of rows) {
-    if (seenIds.has(row.id)) {
-      throw new Error(`服务端返回了重复的窗口 id：${row.id}。`);
-    }
-    seenIds.add(row.id);
-  }
 
   return {
     generatedAtMs: raw.generatedAtMs,
     rows,
-    warnings: raw.warnings,
-    sourceLabel: raw.sourceLabel,
   };
 }
 
@@ -357,21 +347,13 @@ function windowModeLabel(mode: string): string {
 const WEEKLY_WINDOW_PATTERN = /(?:^|\D)7\s*天/u;
 
 /**
- * 初次加载或当前选中行消失时的默认行：优先当前（否则首个）账号中真实的 7 天窗口，
- * 没有周窗口时退回该账号的首个可用行；不生成数据，也不改写标签。
+ * 初次加载或当前选中行消失时的默认行：优先真实的 7 天窗口，其余情况退回首个返回的窗口。
+ * 不生成数据，也不改写标签；同一标签的多个窗口各自保留。
  */
-function pickDefaultRow(rows: WindowRow[], accountId: string): WindowRow | null {
+function pickDefaultRow(rows: WindowView[]): WindowView | null {
   if (rows.length === 0) return null;
 
-  const preferredAccount = accountId
-    ? rows.filter((row) => row.accountId === accountId)
-    : [];
-  const candidates =
-    preferredAccount.length > 0
-      ? preferredAccount
-      : rows.filter((row) => row.accountId === rows[0].accountId);
-
-  const weekly = candidates.filter((row) => WEEKLY_WINDOW_PATTERN.test(row.windowLabel));
+  const weekly = rows.filter((row) => WEEKLY_WINDOW_PATTERN.test(row.windowLabel));
   if (weekly.length > 0) {
     return (
       weekly.find((row) => row.windowMode !== 'rolling' && !row.windowLabel.includes('（')) ??
@@ -380,7 +362,7 @@ function pickDefaultRow(rows: WindowRow[], accountId: string): WindowRow | null 
     );
   }
 
-  return candidates[0];
+  return rows[0];
 }
 
 function basisLabel(basis: Forecast['basis']): string {
@@ -548,7 +530,7 @@ interface UsageBar {
   dashed?: boolean;
 }
 
-function usageBars(row: WindowRow | null, metric: MetricKey): UsageBar[] {
+function usageBars(row: WindowView | null, metric: MetricKey): UsageBar[] {
   const previousCaption = row?.windowMode === 'rolling' ? '前一等长区间' : '上个窗口';
 
   return [
@@ -581,7 +563,7 @@ function WindowUsageComparison({
   row,
   metric,
 }: {
-  row: WindowRow | null;
+  row: WindowView | null;
   metric: MetricKey;
 }) {
   const [wrapRef, size] = useElementSize<HTMLDivElement>();
@@ -629,7 +611,7 @@ function WindowUsageComparison({
   const yFor = (value: number) =>
     padTop + plotHeight - (Math.max(0, value) / maxValue) * plotHeight;
 
-  const description = `${row.accountName} · ${row.windowLabel}，按${metricLabel}比较。${bars
+  const description = `${row.windowLabel}，按${metricLabel}比较。${bars
     .map(
       (bar) =>
         `${bar.caption}：${bar.value === null ? bar.missing : fullMetricValue(metric, bar.value)}`,
@@ -732,7 +714,7 @@ function WindowUsageComparison({
 
 export default function App() {
   const [snapshot, setSnapshot] = useState<Snapshot>(EMPTY_SNAPSHOT);
-  const [selectedId, setSelectedId] = useState('');
+  const [selectedKey, setSelectedKey] = useState('');
   const [modal, setModal] = useState<ModalKind>(null);
   const [dataError, setDataError] = useState('');
   const [loaded, setLoaded] = useState(false);
@@ -747,7 +729,6 @@ export default function App() {
   const abortRef = useRef<AbortController | null>(null);
   const requestSeqRef = useRef(0);
   const toastTimerRef = useRef<number | null>(null);
-  const lastAccountIdRef = useRef('');
 
   const showToast = useCallback((message: string) => {
     setToast(message);
@@ -770,12 +751,17 @@ export default function App() {
     };
   }, []);
 
+  const rows = useMemo(() => createWindowViews(snapshot.rows), [snapshot.rows]);
+
+  // 手动选择以本地 selectionKey 保留：标签与模式唯一的窗口在刷新/重排后仍稳定，
+  // 同标签同模式的重复窗口再按响应顺序序号区分，全程不使用任何服务端标识。
   useEffect(() => {
-    setSelectedId((current) => {
-      if (current && snapshot.rows.some((row) => row.id === current)) return current;
-      return pickDefaultRow(snapshot.rows, lastAccountIdRef.current)?.id ?? '';
-    });
-  }, [snapshot.rows]);
+    setSelectedKey((current) =>
+      current && rows.some((row) => row.selectionKey === current)
+        ? current
+        : pickDefaultRow(rows)?.selectionKey ?? '',
+    );
+  }, [rows]);
 
   const refresh = useCallback(
     async (options?: { silent?: boolean }) => {
@@ -850,52 +836,38 @@ export default function App() {
     };
   }, [modal]);
 
-  const rows = snapshot.rows;
-
   const selectedRow = useMemo(
-    () => rows.find((row) => row.id === selectedId) ?? pickDefaultRow(rows, lastAccountIdRef.current),
-    [rows, selectedId],
+    () => rows.find((row) => row.selectionKey === selectedKey) ?? pickDefaultRow(rows),
+    [rows, selectedKey],
   );
 
-  useEffect(() => {
-    if (selectedRow) lastAccountIdRef.current = selectedRow.accountId;
-  }, [selectedRow]);
-
-  const selectedAccountId = selectedRow?.accountId ?? '';
-
-  const selectedAccountWindows = useMemo(() => {
+  // 筛选选项按标签去重（同名窗口共用一个选项），但表格行保留每个同名窗口。
+  const windowLabels = useMemo(() => {
     const seen = new Set<string>();
     const labels: string[] = [];
     for (const row of rows) {
-      if (row.accountId !== selectedAccountId || seen.has(row.windowLabel)) continue;
+      if (seen.has(row.windowLabel)) continue;
       seen.add(row.windowLabel);
       labels.push(row.windowLabel);
     }
     return labels.sort((left, right) => left.localeCompare(right, 'zh-CN'));
-  }, [rows, selectedAccountId]);
+  }, [rows]);
 
   useEffect(() => {
     setWindowFilter((current) =>
-      current === 'all' || selectedAccountWindows.includes(current) ? current : 'all',
+      current === 'all' || windowLabels.includes(current) ? current : 'all',
     );
-  }, [selectedAccountWindows]);
-
-  const accountRows = useMemo(
-    () => rows.filter((row) => row.accountId === selectedAccountId),
-    [rows, selectedAccountId],
-  );
+  }, [windowLabels]);
 
   const activeWindowFilter =
-    windowFilter === 'all' || selectedAccountWindows.includes(windowFilter)
-      ? windowFilter
-      : 'all';
+    windowFilter === 'all' || windowLabels.includes(windowFilter) ? windowFilter : 'all';
 
   const filteredRows = useMemo(
     () =>
       activeWindowFilter === 'all'
-        ? accountRows
-        : accountRows.filter((row) => row.windowLabel === activeWindowFilter),
-    [accountRows, activeWindowFilter],
+        ? rows
+        : rows.filter((row) => row.windowLabel === activeWindowFilter),
+    [rows, activeWindowFilter],
   );
 
   const totalPages = Math.max(1, Math.ceil(filteredRows.length / PAGE_SIZE));
@@ -943,9 +915,6 @@ export default function App() {
     if (filteredRows.length === 0) return;
 
     const headers = [
-      '账号',
-      '服务商',
-      '套餐',
       '窗口',
       '窗口模式',
       '已用额度(%)',
@@ -968,9 +937,6 @@ export default function App() {
       const projection = row.forecast;
       lines.push(
         [
-          csvText(row.accountName),
-          csvText(row.provider),
-          csvText(row.plan),
           csvText(row.windowLabel),
           csvText(windowModeLabel(row.windowMode)),
           csvNumber(row.usedPercent),
@@ -1113,7 +1079,7 @@ export default function App() {
                     ) : null}
                   </div>
                   <p className="panel-subtitle">
-                    用上一区间、当前已用与预测三项对比同一窗口，不做跨窗口或跨账号汇总。
+                    用上一区间、当前已用与预测三项对比同一窗口，不做跨窗口汇总。
                   </p>
                 </div>
                 <div
@@ -1161,7 +1127,7 @@ export default function App() {
             </section>
 
             <aside
-              id="account-quota"
+              id="window-quota"
               className="panel forecast-panel"
               aria-labelledby="quota-title"
               tabIndex={-1}
@@ -1170,11 +1136,11 @@ export default function App() {
                 <div>
                   <div className="panel-title">
                     <Gauge aria-hidden="true" />
-                    <h2 id="quota-title">账号额度</h2>
+                    <h2 id="quota-title">窗口额度</h2>
                   </div>
                   <p className="panel-subtitle">
                     {selectedRow
-                      ? `${selectedRow.accountName} · ${selectedRow.windowLabel}`
+                      ? selectedRow.windowLabel
                       : '尚未选择窗口'}
                   </p>
                 </div>
@@ -1266,8 +1232,8 @@ export default function App() {
                   </div>
                   <p className="panel-subtitle">
                     {selectedRow
-                      ? `仅显示「${selectedRow.accountName}」的窗口；点击一行切换当前窗口，不同窗口不可相加。`
-                      : '仅显示当前账号的窗口；不同窗口不可相加。'}
+                      ? `当前选中「${selectedRow.windowLabel}」；点击一行切换当前窗口，不同窗口不可相加。`
+                      : '点击一行切换当前窗口；不同窗口不可相加。'}
                   </p>
                 </div>
                 <div className="table-controls">
@@ -1280,7 +1246,7 @@ export default function App() {
                     }}
                     options={[
                       { value: 'all', label: '全部窗口' },
-                      ...selectedAccountWindows.map((label) => ({ value: label, label })),
+                      ...windowLabels.map((label) => ({ value: label, label })),
                     ]}
                   />
                   <button
@@ -1316,11 +1282,9 @@ export default function App() {
                           <strong>
                             {rows.length === 0
                               ? refreshing && !loaded
-                                ? '正在读取实例快照'
+                                ? '正在读取窗口快照'
                                 : '暂无窗口快照'
-                              : accountRows.length === 0
-                                ? '当前账号暂无窗口'
-                                : '没有匹配的窗口'}
+                              : '没有匹配的窗口'}
                           </strong>
                           <small>
                             {rows.length === 0
@@ -1329,16 +1293,14 @@ export default function App() {
                                 : refreshing && !loaded
                                   ? '看板通过 /api/snapshot 读取服务端 .env 中配置的 CPA Manager Plus。'
                                   : '服务端未返回任何窗口记录；请确认 CPA Manager Plus 已生成历史窗口快照。'
-                              : accountRows.length === 0
-                                ? '所选账号暂未返回窗口快照，页面不会生成占位数据。'
-                                : '调整窗口筛选后重试。'}
+                              : '调整窗口筛选后重试。'}
                           </small>
                         </div>
                       </td>
                     </tr>
                   ) : (
                     pageRows.map((row) => {
-                      const isSelected = row.id === selectedRow?.id;
+                      const isSelected = row.selectionKey === selectedRow?.selectionKey;
                       const used = row.usedPercent;
                       const progress = used === null ? 0 : Math.max(0, Math.min(100, used));
                       const riskClass =
@@ -1350,14 +1312,14 @@ export default function App() {
 
                       return (
                         <tr
-                          key={row.id}
+                          key={row.selectionKey}
                           tabIndex={0}
                           aria-selected={isSelected}
-                          onClick={() => setSelectedId(row.id)}
+                          onClick={() => setSelectedKey(row.selectionKey)}
                           onKeyDown={(event) => {
                             if (event.key === 'Enter' || event.key === ' ') {
                               event.preventDefault();
-                              setSelectedId(row.id);
+                              setSelectedKey(row.selectionKey);
                             }
                           }}
                           onFocus={(event) => {
@@ -1401,7 +1363,7 @@ export default function App() {
                               <div
                                 className="progress-track"
                                 role="progressbar"
-                                aria-label={`${row.accountName} ${row.windowLabel} 已用额度`}
+                                aria-label={`${row.windowLabel} 已用额度`}
                                 aria-valuemin={0}
                                 aria-valuemax={100}
                                 aria-valuenow={
@@ -1510,10 +1472,10 @@ export default function App() {
             <div className="table-footer" style={{ flexWrap: 'wrap', gap: 8 }}>
               <span>
                 {filteredRows.length === 0
-                  ? `暂无匹配记录${accountRows.length > 0 ? `（全部 ${accountRows.length} 条）` : ''}`
+                  ? `暂无匹配记录${rows.length > 0 ? `（全部 ${rows.length} 条）` : ''}`
                   : `显示 ${rangeStart}–${rangeEnd} / 共 ${filteredRows.length} 条${
-                      filteredRows.length !== accountRows.length
-                        ? `（全部 ${accountRows.length} 条）`
+                      filteredRows.length !== rows.length
+                        ? `（全部 ${rows.length} 条）`
                         : ''
                     }`}
               </span>
@@ -1605,7 +1567,7 @@ export default function App() {
 
             <p style={{ marginBottom: 14 }}>
               <strong>上一窗口回退：</strong>
-              当前额度比例或用量不足以外推时，仅在上游提供可信、正常结束的上一完整周期且通过一致性校验时，使用上一窗口实际值。不会以其他账号的数据补位。
+              当前额度比例或用量不足以外推时，仅在上游提供可信、正常结束的上一完整周期且通过一致性校验时，使用上一窗口实际值。不会以其它窗口的数据补位。
             </p>
             <p style={{ marginBottom: 14 }}>
               <strong>不做预测的情况：</strong>
@@ -1613,14 +1575,14 @@ export default function App() {
             </p>
             <p style={{ marginBottom: 16 }}>
               <strong>只读与范围：</strong>
-              看板只读取 CPA Manager Plus Full Mode 已存在的额度快照，不主动探测 Provider，也不写配额。没有快照的窗口不会虚构数据。
+              看板只读取 CPA Manager Plus Full Mode 已存在的额度快照，不主动探测上游，也不写配额。没有快照的窗口不会虚构数据。
             </p>
 
             <div className="forecast-note" style={{ margin: '0 0 16px' }}>
               <ShieldAlert aria-hidden="true" style={{ color: '#7598d3' }} />
               <span>
                 <strong>预测是估算，不是保证。</strong>
-                实际额度、成本和上游策略可能变化；请以服务商与 CPA Manager Plus 的数据为准。
+                实际额度、成本和上游策略可能变化；请以上游与 CPA Manager Plus 的数据为准。
               </span>
             </div>
 

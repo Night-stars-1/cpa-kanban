@@ -16,6 +16,13 @@ COPY tsconfig.json vite.config.ts index.html ./
 COPY src ./src
 RUN npm run build
 
+# The HTTP boundary is tested against a local Manager protocol fixture. The
+# fixture is build-only and no operator credentials are needed or copied.
+COPY server.mjs ./
+COPY lib ./lib
+COPY tests ./tests
+RUN node --test tests/dashboard-privacy.test.mjs
+
 # ---- Runtime stage: Node, no app dependencies or frontend toolchain ----
 FROM node:24-alpine AS runtime
 ENV NODE_ENV=production \
