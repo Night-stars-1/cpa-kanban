@@ -23,7 +23,6 @@ import {
   ListFilter,
   RefreshCw,
   ShieldAlert,
-  Target,
   TrendingUp,
   X,
 } from 'lucide-react';
@@ -353,6 +352,35 @@ function windowModeLabel(mode: string): string {
   if (mode === 'fixed') return '固定窗口';
   if (mode === 'rolling') return '滚动窗口';
   return mode || '未知模式';
+}
+
+const WEEKLY_WINDOW_PATTERN = /(?:^|\D)7\s*天/u;
+
+/**
+ * 初次加载或当前选中行消失时的默认行：优先当前（否则首个）账号中真实的 7 天窗口，
+ * 没有周窗口时退回该账号的首个可用行；不生成数据，也不改写标签。
+ */
+function pickDefaultRow(rows: WindowRow[], accountId: string): WindowRow | null {
+  if (rows.length === 0) return null;
+
+  const preferredAccount = accountId
+    ? rows.filter((row) => row.accountId === accountId)
+    : [];
+  const candidates =
+    preferredAccount.length > 0
+      ? preferredAccount
+      : rows.filter((row) => row.accountId === rows[0].accountId);
+
+  const weekly = candidates.filter((row) => WEEKLY_WINDOW_PATTERN.test(row.windowLabel));
+  if (weekly.length > 0) {
+    return (
+      weekly.find((row) => row.windowMode !== 'rolling' && !row.windowLabel.includes('（')) ??
+      weekly.find((row) => row.windowMode !== 'rolling') ??
+      weekly[0]
+    );
+  }
+
+  return candidates[0];
 }
 
 function basisLabel(basis: Forecast['basis']): string {
@@ -719,6 +747,7 @@ export default function App() {
   const abortRef = useRef<AbortController | null>(null);
   const requestSeqRef = useRef(0);
   const toastTimerRef = useRef<number | null>(null);
+  const lastAccountIdRef = useRef('');
 
   const showToast = useCallback((message: string) => {
     setToast(message);
@@ -742,11 +771,10 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    setSelectedId((current) =>
-      current && snapshot.rows.some((row) => row.id === current)
-        ? current
-        : (snapshot.rows[0]?.id ?? ''),
-    );
+    setSelectedId((current) => {
+      if (current && snapshot.rows.some((row) => row.id === current)) return current;
+      return pickDefaultRow(snapshot.rows, lastAccountIdRef.current)?.id ?? '';
+    });
   }, [snapshot.rows]);
 
   const refresh = useCallback(
@@ -777,7 +805,6 @@ export default function App() {
         if (isAbortError(error) || requestSeqRef.current !== requestId) return;
         const message = error instanceof Error ? error.message : '刷新失败。';
         setDataError(message);
-        if (!options?.silent) showToast('刷新失败，请查看页面提示。');
       } finally {
         if (abortRef.current === controller) {
           abortRef.current = null;
@@ -825,30 +852,14 @@ export default function App() {
 
   const rows = snapshot.rows;
 
-  const accountOptions = useMemo(() => {
-    const map = new Map<
-      string,
-      { id: string; name: string; provider: string; plan: string }
-    >();
-    for (const row of rows) {
-      if (!map.has(row.accountId)) {
-        map.set(row.accountId, {
-          id: row.accountId,
-          name: row.accountName,
-          provider: row.provider,
-          plan: row.plan,
-        });
-      }
-    }
-    return Array.from(map.values());
-  }, [rows]);
-
-  const singleAccount = accountOptions.length === 1 ? accountOptions[0] : null;
-
   const selectedRow = useMemo(
-    () => rows.find((row) => row.id === selectedId) ?? rows[0] ?? null,
+    () => rows.find((row) => row.id === selectedId) ?? pickDefaultRow(rows, lastAccountIdRef.current),
     [rows, selectedId],
   );
+
+  useEffect(() => {
+    if (selectedRow) lastAccountIdRef.current = selectedRow.accountId;
+  }, [selectedRow]);
 
   const selectedAccountId = selectedRow?.accountId ?? '';
 
@@ -927,20 +938,6 @@ export default function App() {
       <AlertTriangle aria-hidden="true" /> 预测不可用
     </>
   );
-
-  const handleAccountChange = (accountId: string) => {
-    const candidates = rows.filter((row) => row.accountId === accountId);
-    const next =
-      candidates.find((row) => row.windowLabel === selectedRow?.windowLabel) ?? candidates[0];
-    if (!next) return;
-    setSelectedId(next.id);
-    setPage(1);
-  };
-
-  const handleWindowChange = (windowLabel: string) => {
-    const next = accountRows.find((row) => row.windowLabel === windowLabel);
-    if (next) setSelectedId(next.id);
-  };
 
   const handleExport = () => {
     if (filteredRows.length === 0) return;
@@ -1034,12 +1031,26 @@ export default function App() {
               </label>
               <button
                 type="button"
-                className="btn"
+                className={dataError ? 'btn compact danger' : 'btn'}
                 onClick={() => void refresh()}
                 disabled={refreshing}
+                title={
+                  dataError
+                    ? `${loaded ? '刷新失败，已保留上次数据。' : '读取快照失败。'}${dataError}`
+                    : undefined
+                }
+                aria-label={
+                  dataError
+                    ? `${loaded ? '刷新失败，已保留上次数据。' : '读取快照失败。'}${dataError}，点击重试`
+                    : undefined
+                }
               >
-                <RefreshCw className={refreshing ? 'spin' : undefined} aria-hidden="true" />
-                {refreshing ? '刷新中' : '刷新'}
+                {dataError ? (
+                  <AlertTriangle aria-hidden="true" />
+                ) : (
+                  <RefreshCw className={refreshing ? 'spin' : undefined} aria-hidden="true" />
+                )}
+                {refreshing ? '刷新中' : dataError ? '重试' : '刷新'}
               </button>
               <button
                 type="button"
@@ -1051,30 +1062,6 @@ export default function App() {
               </button>
             </div>
           </section>
-
-          {dataError ? (
-            <div
-              className="error-box"
-              role="alert"
-              style={{ display: 'flex', gap: 10, alignItems: 'flex-start', marginBottom: 22 }}
-            >
-              <AlertTriangle aria-hidden="true" style={{ marginTop: 2, width: 15, height: 15 }} />
-              <div style={{ flex: 1 }}>
-                <strong>
-                  {loaded ? '刷新失败，已保留上次数据。' : '读取快照失败。'}
-                </strong>
-                <div>{dataError}</div>
-              </div>
-              <button
-                type="button"
-                className="btn compact"
-                onClick={() => void refresh()}
-                disabled={refreshing}
-              >
-                重试
-              </button>
-            </div>
-          ) : null}
 
           {snapshot.warnings.length > 0 ? (
             <section
@@ -1101,75 +1088,6 @@ export default function App() {
               </div>
             </section>
           ) : null}
-
-          <section className="panel" aria-label="当前账号" style={{ marginBottom: 22 }}>
-            <div
-              className="panel-header"
-              style={{ paddingBottom: 18, flexWrap: 'wrap', gap: 14, alignItems: 'center' }}
-            >
-              <div>
-                <div className="panel-title">
-                  <Target aria-hidden="true" />
-                  <h2>当前账号</h2>
-                </div>
-                <p className="panel-subtitle">
-                  {accountOptions.length > 1
-                    ? '窗口切换只作用于所选账号；不做跨账号用量比较。'
-                    : '窗口切换只作用于当前账号；图表按窗口对比实际与预测，不同窗口不会相加。'}
-                </p>
-                {accountOptions.length <= 1 ? (
-                  <div
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: 8,
-                      flexWrap: 'wrap',
-                      marginTop: 10,
-                    }}
-                  >
-                    {singleAccount ? (
-                      <>
-                        <strong style={{ fontSize: 13, color: '#33455f' }}>
-                          {singleAccount.name}
-                        </strong>
-                        <span className="badge blue">{singleAccount.provider}</span>
-                        <span className="badge gray">{singleAccount.plan}</span>
-                      </>
-                    ) : (
-                      <span className="badge gray">暂无账号</span>
-                    )}
-                  </div>
-                ) : null}
-              </div>
-              <div className="actions selection-controls">
-                {accountOptions.length > 1 ? (
-                  <label className="legend" style={{ gap: 6 }}>
-                    当前账号
-                    <Select
-                      label="当前账号"
-                      value={selectedAccountId}
-                      onValueChange={handleAccountChange}
-                      options={accountOptions.map((account) => ({
-                        value: account.id,
-                        label: account.name,
-                      }))}
-                    />
-                  </label>
-                ) : null}
-                <label className="legend" style={{ gap: 6 }}>
-                  窗口
-                  <Select
-                    label="窗口"
-                    value={selectedRow?.windowLabel ?? ''}
-                    onValueChange={handleWindowChange}
-                    disabled={!selectedRow || selectedAccountWindows.length === 0}
-                    placeholder="暂无窗口"
-                    options={selectedAccountWindows.map((label) => ({ value: label, label }))}
-                  />
-                </label>
-              </div>
-            </div>
-          </section>
 
           <div className="metrics">
             <MetricCard
@@ -1433,7 +1351,7 @@ export default function App() {
                           <small>
                             {rows.length === 0
                               ? dataError && !loaded
-                                ? '快照读取失败，请先处理上方错误提示。'
+                                ? '快照读取失败，请点击「重试」重新读取。'
                                 : refreshing && !loaded
                                   ? '看板通过 /api/snapshot 读取服务端 .env 中配置的 CPA Manager Plus。'
                                   : '服务端未返回任何窗口记录；请确认 CPA Manager Plus 已生成历史窗口快照。'

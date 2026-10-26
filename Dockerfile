@@ -1,7 +1,10 @@
 # syntax=docker/dockerfile:1
 
 # ---- Build stage: compile the browser bundle, then discard the toolchain ----
-FROM node:24-alpine AS build
+# The bundle is architecture independent and the runtime only needs Node
+# builtins, so the build always runs on the builder's own platform even when the
+# published runtime image targets another architecture.
+FROM --platform=$BUILDPLATFORM node:24-alpine AS build
 WORKDIR /app
 
 # Dependencies are installed from the lockfile only, so the image build never

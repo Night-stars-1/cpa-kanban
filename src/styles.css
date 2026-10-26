@@ -90,15 +90,6 @@ button svg {
   align-items: center;
   gap: 9px;
 }
-.selection-controls {
-  min-width: 0;
-  max-width: 100%;
-  flex-wrap: wrap;
-}
-.selection-controls > .legend {
-  min-width: 0;
-  max-width: 100%;
-}
 .btn {
   border: 1px solid #e1e6ef;
   background: #fff;
@@ -137,6 +128,15 @@ button svg {
   padding: 5px 9px;
   min-height: 29px;
   font-size: 11px;
+}
+.btn.danger {
+  border-color: #f0cccc;
+  background: #fff5f5;
+  color: #c26161;
+}
+.btn.danger:hover {
+  border-color: #e2abab;
+  background: #ffecec;
 }
 .badge {
   display: inline-flex;
@@ -777,17 +777,6 @@ tbody tr:hover {
   gap: 9px;
   justify-content: flex-end;
   margin-top: 23px;
-}
-.error-box {
-  color: #c26161;
-  font-size: 11px;
-  padding: 12px;
-  background: #fff2f2;
-  border: 1px solid #f6dede;
-  border-radius: 7px;
-  line-height: 1.8;
-  margin-bottom: 15px;
-  overflow-wrap: anywhere;
 }
 .notice-box {
   font-size: 11px;

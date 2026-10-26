@@ -18,13 +18,21 @@ concurrency:
 
 permissions:
   contents: read
-  packages: write
 
 jobs:
+  # Builds one manifest index holding both target architectures. The build stage
+  # is pinned to $BUILDPLATFORM, so nothing is emulated here.
   publish:
-    name: Build and smoke test image
+    name: Build and push multi-architecture image
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      # The index reference and digest are shared by every verification runner.
+      name: ${{ steps.image.outputs.name }}
+      digest: ${{ steps.build.outputs.digest }}
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -76,55 +84,15 @@ jobs:
           context: .
           file: ./Dockerfile
           push: true
-          # Only the architecture validated for this dashboard is published.
-          platforms: linux/amd64
+          # Both target architectures go into a single manifest index, so one
+          # tag resolves to the native image of whichever host pulls it.
+          platforms: linux/amd64,linux/arm64
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
           # No Manager address or admin key is injected: configuration stays a
           # runtime concern of the container.
-
-      - name: Pull published image anonymously
-        env:
-          IMAGE: ${{ steps.image.outputs.name }}
-          DIGEST: ${{ steps.build.outputs.digest }}
-        run: |
-          set -euo pipefail
-          docker logout ghcr.io
-          docker pull "$IMAGE@$DIGEST"
-
-      - name: Start published image through Compose
-        env:
-          CPA_INSIGHT_IMAGE: ${{ steps.image.outputs.name }}@${{ steps.build.outputs.digest }}
-          # Unused host ports for this smoke test only.
-          PORT: '55173'
-          BIND_ADDRESS: 127.0.0.1
-        run: |
-          set -euo pipefail
-          # Manager credentials are intentionally absent: the health check is a
-          # liveness probe and must pass without an upstream data source.
-          docker compose -p ghcr-smoke up -d --no-build --wait --wait-timeout 90
-          curl --fail --silent --show-error http://127.0.0.1:55173/api/health
-          echo
-          curl --fail --silent --show-error --output /dev/null http://127.0.0.1:55173/
-          # Domain and HTTPS proxy access must not require a registered public origin.
-          curl --fail --silent --show-error --output /dev/null \
-            -H 'Host: dashboard.example.test:8443' \
-            -H 'Origin: https://dashboard.example.test:8443' \
-            http://127.0.0.1:55173/api/health
-          docker compose -p ghcr-smoke ps
-
-      - name: Stop smoke test containers
-        if: always() && steps.build.outputs.digest != ''
-        env:
-          CPA_INSIGHT_IMAGE: ${{ steps.image.outputs.name }}@${{ steps.build.outputs.digest }}
-          PORT: '55173'
-          BIND_ADDRESS: 127.0.0.1
-        run: |
-          # Container output is kept in the job log so a failed --wait is diagnosable.
-          docker compose -p ghcr-smoke logs --no-color --tail 100 || true
-          docker compose -p ghcr-smoke down --remove-orphans
 
       - name: Report published reference
         if: always() && steps.build.outputs.digest != ''
@@ -141,3 +109,93 @@ jobs:
             echo "${{ steps.meta.outputs.tags }}"
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
+
+  # Each architecture is pulled and booted on a real host of that architecture,
+  # so the published index is proven to contain genuine target binaries.
+  verify:
+    name: Verify ${{ matrix.platform }} image
+    needs: publish
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            runner: ubuntu-latest
+            expected_arch: x64
+            expected_uname: x86_64
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
+            expected_arch: arm64
+            expected_uname: aarch64
+    env:
+      # Exact index reference: both runners pull the same digest, only the
+      # platform selector differs.
+      CPA_INSIGHT_IMAGE: ${{ needs.publish.outputs.name }}@${{ needs.publish.outputs.digest }}
+      # Unused host ports for this smoke test only.
+      PORT: '55173'
+      BIND_ADDRESS: 127.0.0.1
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Assert native runner architecture
+        shell: bash
+        run: |
+          set -euo pipefail
+          actual="$(uname -m)"
+          echo "Runner ${{ matrix.runner }} reports uname -m = $actual"
+          if [ "$actual" != "${{ matrix.expected_uname }}" ]; then
+            echo "::error::Expected native ${{ matrix.platform }} hardware (${{ matrix.expected_uname }}), got $actual"
+            exit 1
+          fi
+
+      - name: Pull published image anonymously
+        id: pull
+        env:
+          IMAGE: ${{ needs.publish.outputs.name }}
+          DIGEST: ${{ needs.publish.outputs.digest }}
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          set -euo pipefail
+          # Anonymous pull: no registry credentials may remain for this step.
+          docker logout ghcr.io
+          docker pull --platform "$PLATFORM" "$IMAGE@$DIGEST"
+
+      - name: Start published image through Compose
+        env:
+          EXPECTED_ARCH: ${{ matrix.expected_arch }}
+        run: |
+          set -euo pipefail
+          # Manager credentials are intentionally absent: the health check is a
+          # liveness probe and must pass without an upstream data source.
+          docker compose -p ghcr-smoke up -d --no-build --wait --wait-timeout 90
+          # The runtime must be a real ${{ matrix.platform }} binary, not an
+          # emulated or mislabelled one.
+          actual_arch="$(docker compose -p ghcr-smoke exec -T cpa-insight node -p process.arch)"
+          echo "Container node process.arch = $actual_arch"
+          if [ "$actual_arch" != "$EXPECTED_ARCH" ]; then
+            echo "::error::Expected node process.arch $EXPECTED_ARCH, got $actual_arch"
+            exit 1
+          fi
+          curl --fail --silent --show-error http://127.0.0.1:55173/api/health
+          echo
+          curl --fail --silent --show-error --output /dev/null http://127.0.0.1:55173/
+          # Domain and HTTPS proxy access must not require a registered public origin.
+          curl --fail --silent --show-error --output /dev/null \
+            -H 'Host: dashboard.example.test:8443' \
+            -H 'Origin: https://dashboard.example.test:8443' \
+            http://127.0.0.1:55173/api/health
+          docker compose -p ghcr-smoke ps
+
+      - name: Stop smoke test containers
+        if: always() && steps.pull.outcome == 'success'
+        run: |
+          # Container output is kept in the job log so a failed --wait is diagnosable.
+          docker compose -p ghcr-smoke logs --no-color --tail 100 || true
+          docker compose -p ghcr-smoke down --remove-orphans
