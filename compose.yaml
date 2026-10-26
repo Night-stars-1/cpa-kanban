@@ -16,9 +16,8 @@ services:
       # Empty values are allowed: the UI then reports the upstream as unavailable.
       CPA_MANAGER_BASE_URL: ${CPA_MANAGER_BASE_URL:-}
       CPA_MANAGER_ADMIN_KEY: ${CPA_MANAGER_ADMIN_KEY:-}
-      PUBLIC_ORIGIN: ${PUBLIC_ORIGIN:-}
     ports:
-      # Loopback-only by default; set BIND_ADDRESS plus PUBLIC_ORIGIN to expose it.
+      # Loopback-only by default; set BIND_ADDRESS to publish on an external address.
       - "${BIND_ADDRESS:-127.0.0.1}:${PORT:-5173}:5173"
     extra_hosts:
       # Lets the container reach a CPA Manager running directly on the host.

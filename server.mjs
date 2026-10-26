@@ -14,17 +14,6 @@ function json(res, status, value) {
   res.end(JSON.stringify(value));
 }
 
-const loopbackHosts = new Set(['localhost', '127.0.0.1', '[::1]']);
-
-function parsePublicOrigin(value) {
-  if (!value?.trim()) return null;
-  let origin;
-  try { origin = new URL(value.trim()); } catch { throw new Error('PUBLIC_ORIGIN 必须是完整的 http:// 或 https:// 来源地址。'); }
-  if (!['http:', 'https:'].includes(origin.protocol) || origin.username || origin.password || origin.pathname !== '/' || origin.search || origin.hash) {
-    throw new Error('PUBLIC_ORIGIN 只能包含 http(s) 协议、主机和可选端口，不能包含凭据、路径或查询参数。');
-  }
-  return origin;
-}
 
 function parseAuthority(value) {
   if (!value) return null;
@@ -35,9 +24,18 @@ function parseAuthority(value) {
   } catch { return null; }
 }
 
+function isSameRequestAuthority(value, host) {
+  try {
+    const origin = new URL(value);
+    // TLS can terminate at a proxy; use the browser scheme to normalize default ports.
+    return ['http:', 'https:'].includes(origin.protocol)
+      && origin.origin === value
+      && origin.host === new URL(`${origin.protocol}//${host}`).host;
+  } catch { return false; }
+}
+
 export async function createDashboardServer({ production = false, port = 5173 } = {}) {
   const host = process.env.HOST?.trim() || '127.0.0.1';
-  const publicOrigin = parsePublicOrigin(process.env.PUBLIC_ORIGIN);
   const configuration = {
     baseUrl: process.env.CPA_MANAGER_BASE_URL?.trim() || '',
     key: process.env.CPA_MANAGER_ADMIN_KEY?.trim() || '',
@@ -56,16 +54,7 @@ export async function createDashboardServer({ production = false, port = 5173 } 
     res.setHeader('Referrer-Policy', 'no-referrer');
     const authority = parseAuthority(req.headers.host);
     if (!authority) return json(res, 400, { error: 'Host 请求头无效。' });
-    const localHost = loopbackHosts.has(authority.hostname);
-    const publicHost = publicOrigin !== null && authority.hostname === publicOrigin.hostname
-      && new URL(`${publicOrigin.protocol}//${req.headers.host}`).host === publicOrigin.host;
-    if (!localHost && !publicHost) {
-      return json(res, 403, { error: '访问主机未获允许，请使用本机地址或在服务端配置 PUBLIC_ORIGIN。' });
-    }
-    if (req.headers.origin && !(
-      (localHost && req.headers.origin === authority.origin)
-      || (publicHost && req.headers.origin === publicOrigin.origin)
-    )) {
+    if (req.headers.origin && !isSameRequestAuthority(req.headers.origin, req.headers.host)) {
       return json(res, 403, { error: '不允许跨站请求。' });
     }
     const pathname = new URL(req.url, authority.origin).pathname;

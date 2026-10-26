@@ -108,6 +108,11 @@ jobs:
           curl --fail --silent --show-error http://127.0.0.1:55173/api/health
           echo
           curl --fail --silent --show-error --output /dev/null http://127.0.0.1:55173/
+          # Domain and HTTPS proxy access must not require a registered public origin.
+          curl --fail --silent --show-error --output /dev/null \
+            -H 'Host: dashboard.example.test:8443' \
+            -H 'Origin: https://dashboard.example.test:8443' \
+            http://127.0.0.1:55173/api/health
           docker compose -p ghcr-smoke ps
 
       - name: Stop smoke test containers

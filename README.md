@@ -33,8 +33,7 @@ npm run dev
 | `CPA_MANAGER_ADMIN_KEY` | 是 | Manager Admin Key，不是模型 API Key，也不是单独 CPA 的 Management Key |
 | `PORT` | 否 | 本机端口，默认 `5173`；Compose 中为宿主机发布端口，容器内部固定 `5173` |
 | `HOST` | 否 | Node.js 监听地址，默认 `127.0.0.1`；镜像与 Compose 内固定为 `0.0.0.0` |
-| `PUBLIC_ORIGIN` | 否 | 非本机访问时允许的完整 `http(s)://主机[:端口]`，不能包含路径、查询或凭据 |
-| `BIND_ADDRESS` | 否 | 仅 Compose：宿主机发布地址，默认 `127.0.0.1`；开放局域网需配合 `PUBLIC_ORIGIN` |
+| `BIND_ADDRESS` | 否 | 仅 Compose：宿主机发布地址，默认 `127.0.0.1`；开放局域网时设为 `0.0.0.0` |
 | `CPA_INSIGHT_IMAGE` | 否 | 仅 Compose：使用的镜像，默认 `ghcr.io/night-stars-1/cpa-kanban:latest`；可指定版本／`sha-` 标签或本地构建标签 |
 
 可以直接由终端、容器或服务管理器注入环境变量，不必创建 `.env`。启动入口自动加载根目录 `.env`，**系统环境变量优先**；修改任一配置后需重启 Node.js 服务。不要使用 `VITE_` 前缀传递管理密钥。
@@ -114,16 +113,17 @@ docker compose up -d --build
 
 ### 局域网与反向代理
 
-默认不向局域网或公网公开。确需通过服务器 IP 访问时，设置实际的发布地址与浏览器来源，例如：
+默认不向局域网或公网公开。确需通过局域网地址访问时，只设置发布地址即可：
 
 ```dotenv
 BIND_ADDRESS=0.0.0.0
-PUBLIC_ORIGIN=http://192.168.1.100:5173
 ```
 
-将示例 IP、协议和端口改成实际访问地址。`PUBLIC_ORIGIN` 只允许一个完整来源；未知 Host 和跨来源请求仍被拒绝，不会因为容器监听 `0.0.0.0` 而全部放开。
+随后用实际的主机名、IP 和端口访问，例如 `http://192.168.1.100:5173`。程序不维护访问来源清单，域名和 IP 都能直接访问，无需注册、白名单或额外的环境变量。
 
-本看板**没有内置登录认证**，公开后他人可能读取账号用量。公网部署应使用带鉴权的 HTTPS 反向代理，通常继续保留 `BIND_ADDRESS=127.0.0.1`，并设置 `PUBLIC_ORIGIN=https://你的实际域名`。代理必须保留浏览器访问的 Host；程序不自动信任 `X-Forwarded-Host` 或 `X-Forwarded-Proto`。
+服务端只校验请求头本身：`Host` 语法无效时返回 HTTP 400；请求带 `Origin` 头、且其中的主机或端口与 `Host` 不一致时返回 HTTP 403。比较只涉及主机与端口，不涉及协议，因此反向代理终止 TLS、后端仍以 HTTP 提供服务时同样可以访问。反向代理应原样保留浏览器的 `Host`；程序不会自动信任 `X-Forwarded-Host` 或 `X-Forwarded-Proto`。
+
+本看板**没有内置登录认证**，公开后他人可能读取账号用量。公网部署应使用带鉴权的 HTTPS 反向代理，通常继续保留 `BIND_ADDRESS=127.0.0.1`，只让代理访问后端。
 
 ### 更新、日志与停止
 
@@ -203,7 +203,7 @@ docker compose down
 
 不会调用写入端点 `POST /v0/management/quota-snapshots`。账号／窗口请求分批遵循上游数量上限，响应按账号、请求键及精确时间区间关联，不跨账号猜测数据。上游请求超时 30 秒，不跟随重定向。
 
-管理密钥仅在 Node.js 服务端使用，不进入前端构建产物、页面、浏览器请求或浏览器存储。`.env` 已加入 Git 与 Docker 上下文忽略规则，`.env.example` 只提供不含真实密钥的模板。服务只接受本机 Host 或显式配置的 `PUBLIC_ORIGIN`，拒绝不匹配的 Origin；上游错误不转发原始响应体。字体来自 Google Fonts，失败时回退系统字体，额度数据与密钥不会发送到字体服务。
+管理密钥仅在 Node.js 服务端使用，不进入前端构建产物、页面、浏览器请求或浏览器存储。`.env` 已加入 Git 与 Docker 上下文忽略规则，`.env.example` 只提供不含真实密钥的模板。域名或 IP 均可直接访问，服务不维护 Host 清单；仅拒绝语法无效的 `Host`，以及主机或端口与 `Host` 不一致的 `Origin`。上游错误不转发原始响应体。字体来自 Google Fonts，失败时回退系统字体，额度数据与密钥不会发送到字体服务。
 
 ## 代码入口
 

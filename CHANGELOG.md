@@ -23,6 +23,6 @@
 - Compose 镜像可通过 `CPA_INSIGHT_IMAGE` 配置，默认使用公开的 `ghcr.io/night-stars-1/cpa-kanban:latest`，支持匿名拉取，无需 GitHub 登录或包读取令牌；仍保留源码构建方式。
 - 使用 React、TypeScript、Vite 和 Node.js，提供统一的开发与生产启动入口。
 - 支持 Docker Compose 构建与启动，提供多阶段、非 root 的 Node.js 生产镜像和进程健康检查，管理密钥仅在运行时注入。
-- 容器内部监听 `0.0.0.0`，宿主机默认只发布回环端口；支持独立的宿主机端口映射与显式 `PUBLIC_ORIGIN`，继续拒绝未知 Host 和跨来源请求。
+- 容器内部监听 `0.0.0.0`，宿主机默认只发布回环端口；支持独立的宿主机端口映射，域名或 IP 均可直接访问，无需注册来源或配置额外变量，仅校验 `Host` 语法与 `Origin` 的主机和端口一致性。
 - 本机数据接口统一使用 `GET /api/snapshot`；移除由浏览器提交地址和密钥的旧 POST 接口。
 - 真实数据接入要求 CPA Manager Plus Full Mode、请求历史与已有额度快照，不支持仅有纯 CPA 的历史窗口预测。
