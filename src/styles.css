@@ -705,35 +705,6 @@ tbody tr:hover {
   font-size: 10px;
   color: #9da7b5;
 }
-.info-panel {
-  padding: 18px 21px;
-  display: flex;
-  align-items: flex-start;
-  gap: 12px;
-}
-.info-icon {
-  background: #f0f5ff;
-  color: #7598d3;
-  padding: 8px;
-  border-radius: 7px;
-  display: flex;
-}
-.info-icon svg {
-  width: 16px;
-  height: 16px;
-}
-.info-panel h3 {
-  font-size: 11px;
-  font-weight: 500;
-  margin: 1px 0 7px;
-  color: #62728c;
-}
-.info-panel p {
-  font-size: 10px;
-  line-height: 1.9;
-  margin: 0;
-  color: #9aa5b5;
-}
 .modal-backdrop {
   position: fixed;
   inset: 0;
@@ -952,9 +923,6 @@ tbody tr:hover {
   }
   .table-footer {
     padding: 12px 14px;
-  }
-  .info-panel {
-    padding: 15px;
   }
   .toast {
     left: 50%;

@@ -1063,32 +1063,6 @@ export default function App() {
             </div>
           </section>
 
-          {snapshot.warnings.length > 0 ? (
-            <section
-              className="panel"
-              aria-labelledby="warning-title"
-              style={{ marginBottom: 22 }}
-            >
-              <div className="info-panel">
-                <span
-                  className="info-icon"
-                  style={{ background: '#fff7ec', color: '#c68b36' }}
-                  aria-hidden="true"
-                >
-                  <AlertTriangle />
-                </span>
-                <div>
-                  <h3 id="warning-title">数据提示</h3>
-                  {snapshot.warnings.map((warning, index) => (
-                    <p key={`${index}-${warning}`} style={{ marginTop: index === 0 ? 0 : 4 }}>
-                      {warning}
-                    </p>
-                  ))}
-                </div>
-              </div>
-            </section>
-          ) : null}
-
           <div className="metrics">
             <MetricCard
               label="实际请求"
