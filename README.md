@@ -58,16 +58,13 @@ npm start
 
 镜像发布在 `ghcr.io/night-stars-1/cpa-kanban`，由仓库 [Night-stars-1/cpa-kanban](https://github.com/Night-stars-1/cpa-kanban) 的 GitHub Actions 在 `main` 分支和 `v*` 标签上构建并推送。
 
-仓库与镜像包都是**私有**的：拉取前需要先登录 GHCR，且该 GitHub 账号必须能访问上述仓库并已获得该镜像包的读取权限；仅凭镜像地址无法匿名拉取。
+仓库与镜像包均为**公开**，可以匿名克隆和拉取；不需要登录 GHCR，也不需要配置 `GHCR_TOKEN` 或 GitHub 个人访问令牌。
 
 ```sh
-# 先通过安全方式设置临时 GHCR_TOKEN 环境变量，再通过标准输入登录
-printf '%s' "$GHCR_TOKEN" | docker login ghcr.io -u 你的GitHub用户名 --password-stdin
+docker pull ghcr.io/night-stars-1/cpa-kanban:latest
 ```
 
-`GHCR_TOKEN` 应为具有 `read:packages` 权限、且允许读取该包的 GitHub 个人访问令牌（classic），**不是** CPA Manager Admin Key。普通 `gh auth` 登录令牌未必有包读取权限，不能直接假定它能用于拉取。不要把注册表令牌写进命令行参数、`compose.yaml`、`.env` 或本仓库文件；Docker 可能把登录凭据保存到本机凭据助手或 Docker 登录配置，临时机器使用完成后执行 `docker logout ghcr.io`。
-
-仓库与镜像包的可见性由仓库所有者维护，本仓库不要求也不记录任何账号凭据；推送镜像只使用 GitHub Actions 运行时的 `GITHUB_TOKEN`。
+运行看板仍需通过服务端 `.env` 配置 Manager 地址和 Admin Key，这些配置不会进入公开仓库或镜像。推送镜像只使用 GitHub Actions 运行时的 `GITHUB_TOKEN`；发布流程会退出注册表登录后验证匿名拉取。
 
 镜像目前仅发布 `linux/amd64`。其他架构需要自行从源码构建，或显式以 `--platform linux/amd64` 运行并接受模拟执行的性能与兼容性风险。
 

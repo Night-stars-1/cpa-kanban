@@ -20,7 +20,7 @@
 ## 构建与兼容性
 
 - GitHub Actions 自动向 GHCR 发布 `linux/amd64` 镜像，部署时可直接拉取预构建产物；`main` 分支提供 `latest` 和提交标签，版本标签提供对应版本镜像。
-- Compose 使用的镜像名改为由 `CPA_INSIGHT_IMAGE` 控制，默认 `ghcr.io/night-stars-1/cpa-kanban:latest`，仍保留源码构建配置；私有包需先以具备读取权限的 GitHub 令牌登录 `ghcr.io`，令牌不写入项目文件。
+- Compose 镜像可通过 `CPA_INSIGHT_IMAGE` 配置，默认使用公开的 `ghcr.io/night-stars-1/cpa-kanban:latest`，支持匿名拉取，无需 GitHub 登录或包读取令牌；仍保留源码构建方式。
 - 使用 React、TypeScript、Vite 和 Node.js，提供统一的开发与生产启动入口。
 - 支持 Docker Compose 构建与启动，提供多阶段、非 root 的 Node.js 生产镜像和进程健康检查，管理密钥仅在运行时注入。
 - 容器内部监听 `0.0.0.0`，宿主机默认只发布回环端口；支持独立的宿主机端口映射与显式 `PUBLIC_ORIGIN`，继续拒绝未知 Host 和跨来源请求。

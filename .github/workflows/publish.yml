@@ -85,11 +85,14 @@ jobs:
           # No Manager address or admin key is injected: configuration stays a
           # runtime concern of the container.
 
-      - name: Pull the exact published digest
+      - name: Pull published image anonymously
         env:
           IMAGE: ${{ steps.image.outputs.name }}
           DIGEST: ${{ steps.build.outputs.digest }}
-        run: docker pull "$IMAGE@$DIGEST"
+        run: |
+          set -euo pipefail
+          docker logout ghcr.io
+          docker pull "$IMAGE@$DIGEST"
 
       - name: Start published image through Compose
         env:
