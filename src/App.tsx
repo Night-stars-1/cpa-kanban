@@ -1133,18 +1133,19 @@ export default function App() {
               tabIndex={-1}
             >
               <div className="panel-header">
-                <div>
-                  <div className="panel-title">
-                    <Gauge aria-hidden="true" />
-                    <h2 id="quota-title">窗口额度</h2>
-                  </div>
-                  <p className="panel-subtitle">
-                    {selectedRow
-                      ? selectedRow.windowLabel
-                      : '尚未选择窗口'}
-                  </p>
+                <div className="panel-title">
+                  <Gauge aria-hidden="true" />
+                  <h2 id="quota-title">窗口额度</h2>
                 </div>
-                {selectedRow?.stale ? <span className="badge orange">数据过期</span> : null}
+                <div className="quota-header-tags">
+                  <span
+                    className={`badge quota-window-tag ${selectedRow ? 'blue' : 'gray'}`}
+                    title={selectedRow?.windowLabel ?? '尚未选择窗口'}
+                  >
+                    {selectedRow?.windowLabel ?? '尚未选择窗口'}
+                  </span>
+                  {selectedRow?.stale ? <span className="badge orange">数据过期</span> : null}
+                </div>
               </div>
 
               <div className="ring-wrap">

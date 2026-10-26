@@ -377,6 +377,22 @@ button svg {
   display: flex;
   flex-direction: column;
 }
+.quota-header-tags {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+  max-width: 60%;
+}
+.quota-window-tag {
+  display: block;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .ring-wrap {
   display: flex;
   align-items: center;
