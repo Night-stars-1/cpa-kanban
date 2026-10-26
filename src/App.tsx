@@ -1210,18 +1210,6 @@ export default function App() {
                   </strong>
                 </div>
               </div>
-
-              {forecast ? (
-                <div className="forecast-note">
-                  <Info aria-hidden="true" />
-                  <span>
-                    {forecast.basis === 'previous'
-                      ? '当前窗口额度比例缺失，采用可信的上一窗口实际用量回退。'
-                      : '按已用额度比例外推至窗口结束，并与当前实际用量取较大值。'}{' '}
-                    <strong>预测为估算，不是保证。</strong>
-                  </span>
-                </div>
-              ) : null}
             </aside>
           </div>
 
