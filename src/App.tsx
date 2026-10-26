@@ -344,6 +344,14 @@ function windowModeLabel(mode: string): string {
   return mode || '未知模式';
 }
 
+const COMPACT_WINDOW_UNITS: Record<string, string> = { 天: 'D', 小时: 'H', 分钟: 'M', 秒: 'S' };
+
+function quotaPeriodTag(label: string): string {
+  const period = /^(?:滚动\s*)?(\d+(?:\.\d+)?)\s*(天|小时|分钟|秒)/u.exec(label);
+  if (period) return `${period[1]}${COMPACT_WINDOW_UNITS[period[2]]}`;
+  return label.split('（')[0].replace(/窗口$/u, '').trim() || '—';
+}
+
 const WEEKLY_WINDOW_PATTERN = /(?:^|\D)7\s*天/u;
 
 /**
@@ -1075,7 +1083,9 @@ export default function App() {
                     <BarChart3 aria-hidden="true" />
                     <h2 id="usage-title">窗口用量对比</h2>
                     {selectedRow ? (
-                      <span className="badge blue">{selectedRow.windowLabel}</span>
+                      <span className="badge blue" title={selectedRow.windowLabel}>
+                        {quotaPeriodTag(selectedRow.windowLabel)}
+                      </span>
                     ) : null}
                   </div>
                   <p className="panel-subtitle">
@@ -1142,8 +1152,16 @@ export default function App() {
                     className={`badge quota-window-tag ${selectedRow ? 'blue' : 'gray'}`}
                     title={selectedRow?.windowLabel ?? '尚未选择窗口'}
                   >
-                    {selectedRow?.windowLabel ?? '尚未选择窗口'}
+                    {selectedRow ? quotaPeriodTag(selectedRow.windowLabel) : '尚未选择窗口'}
                   </span>
+                  {!forecast ? (
+                    <span
+                      className="badge gray"
+                      title={selectedRow ? forecastReason : '尚未读取到窗口快照'}
+                    >
+                      无法预测
+                    </span>
+                  ) : null}
                   {selectedRow?.stale ? <span className="badge orange">数据过期</span> : null}
                 </div>
               </div>
@@ -1203,22 +1221,7 @@ export default function App() {
                     <strong>预测为估算，不是保证。</strong>
                   </span>
                 </div>
-              ) : (
-                <div className="forecast-note">
-                  <AlertTriangle
-                    aria-hidden="true"
-                    style={{ color: '#d5a35b' }}
-                  />
-                  <span>
-                    <strong>无法预测：</strong>
-                    {selectedRow
-                      ? forecastReason
-                      : rows.length === 0
-                        ? '尚未读取到窗口快照，页面不会生成占位数据。'
-                        : '选择窗口后显示额度状态与预测依据。'}
-                  </span>
-                </div>
-              )}
+              ) : null}
             </aside>
           </div>
 

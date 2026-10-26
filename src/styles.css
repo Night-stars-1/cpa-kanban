@@ -381,10 +381,16 @@ button svg {
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  flex-wrap: wrap;
-  gap: 6px;
+  flex-wrap: nowrap;
+  gap: 4px;
   min-width: 0;
   max-width: 60%;
+}
+.quota-header-tags > .badge {
+  padding: 4px;
+}
+.quota-header-tags > .badge:not(.quota-window-tag) {
+  flex-shrink: 0;
 }
 .quota-window-tag {
   display: block;
